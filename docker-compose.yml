@@ -1,0 +1,50 @@
+
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: arb-redpanda
+    command: >
+      redpanda start
+      --smp 1
+      --memory 1G
+      --reserve-memory 0M
+      --overprovisioned
+      --node-id 0
+      --check=false
+      --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      --advertise-kafka-addr internal://arb-redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+      - "9644:9644"
+    volumes:
+      - ./data/redpanda:/var/lib/redpanda/data
+    networks:
+      - arb-net
+
+  questdb:
+    image: questdb/questdb:latest
+    container_name: arb-questdb
+    ports:
+      - "9000:9000"
+      - "9009:9009"
+    volumes:
+      - ./data/questdb:/var/lib/questdb
+    networks:
+      - arb-net
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    container_name: arb-console
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: arb-redpanda:9092
+    depends_on:
+      - redpanda
+    networks:
+      - arb-net
+
+networks:
+  arb-net:
+    driver: bridge

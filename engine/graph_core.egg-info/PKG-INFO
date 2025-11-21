@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: graph_core
+Version: 0.0.1
+Summary: A hybrid C++/Python arbitrage engine
+Author: Antigravity
+Requires-Dist: pybind11>=2.11.1
+Dynamic: author
+Dynamic: requires-dist
+Dynamic: summary

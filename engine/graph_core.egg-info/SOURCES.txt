@@ -1,0 +1,9 @@
+pyproject.toml
+setup.py
+graph_core.egg-info/PKG-INFO
+graph_core.egg-info/SOURCES.txt
+graph_core.egg-info/dependency_links.txt
+graph_core.egg-info/not-zip-safe
+graph_core.egg-info/requires.txt
+graph_core.egg-info/top_level.txt
+src/graph.cpp

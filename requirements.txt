@@ -1,0 +1,10 @@
+confluent-kafka>=2.3.0
+questdb>=1.0.0
+requests>=2.31.0
+ujson>=5.9.0
+numpy>=1.24.0
+pandas>=2.0.0
+pybind11>=2.11.1
+python-dotenv>=1.0.0
+fastapi>=0.109.0
+uvicorn>=0.27.0
