@@ -23,19 +23,20 @@ logger = get_logger("ArbitrageEngine")
 # Global signal queue (thread-safe)
 signal_queue = queue.Queue(maxsize=1000)
 
-def calculate_profit_pct(cycle, graph_weights):
-    """
-    Calculate profit percentage from an arbitrage cycle.
-    cycle: ['EUR', 'USD', 'JPY', 'EUR']
-    Returns: profit percentage (e.g., 0.5 for 0.5% profit)
-    """
-    # In a real implementation, you would query the graph for current rates
-    # For now, return a placeholder
-    # The actual profit is: exp(-sum_of_weights) - 1
-    # Since weights are -log(rate), sum = -log(product of rates)
-    # exp(-sum) = product of rates
-    # If product > 1, there's profit
-    return 0.1  # Placeholder: 0.1% profit
+# Expanded currency list (15 currencies)
+CURRENCIES = [
+    # Major currencies
+    "EUR", "USD", "JPY", "GBP", "AUD", "CAD", "CHF",
+    "INR",  # Indian Rupee
+    "CNY",  # Chinese Yuan
+    "RUB",  # Russian Ruble
+    "KWD",  # Kuwaiti Dinar
+    "SGD",  # Singapore Dollar
+    "HKD",  # Hong Kong Dollar
+    "BRL",  # Brazilian Real
+    "MXN",  # Mexican Peso
+]
+
 
 def signal_storage_worker():
     """
@@ -62,12 +63,11 @@ def signal_storage_worker():
                     
                     cycle = signal_data['cycle']
                     detected_at = signal_data['timestamp']
+                    profit_pct = signal_data['profit_pct']
+                    order = signal_data['order']
                     
                     # Generate unique ID
                     signal_id = str(uuid.uuid4())[:8]
-                    
-                    # Calculate profit (placeholder)
-                    profit_pct = calculate_profit_pct(cycle, None)
                     
                     # Format cycle as string
                     path_str = ' -> '.join(cycle)
@@ -76,7 +76,7 @@ def signal_storage_worker():
                     message = {
                         'signal_id': signal_id,
                         'path': path_str,
-                        'currencies': len(cycle) - 1,  # -1 because cycle repeats first currency
+                        'currencies': order,
                         'profit_pct': profit_pct,
                         'detected_at': detected_at,
                         'source': 'MOCK'
@@ -98,14 +98,14 @@ def signal_storage_worker():
                         },
                         columns={
                             'path': path_str,
-                            'currencies': len(cycle) - 1,
+                            'currencies': order,
                             'profit_pct': profit_pct
                         },
                         at=TimestampNanos.now()
                     )
                     sender.flush()
                     
-                    logger.info(f"Stored signal {signal_id}: {path_str} ({profit_pct:.3f}%)")
+                    logger.info(f"Stored signal {signal_id}: {path_str} ({profit_pct:.4f}%) [Order: {order}]")
                     
                 except queue.Empty:
                     continue  # No signals, keep waiting
@@ -116,18 +116,19 @@ def signal_storage_worker():
         producer.flush()
         logger.info("Signal storage worker stopped")
 
+
 def main():
     logger.info("Starting Arbitrage Engine (C++ Core)...")
+    logger.info(f"Supported currencies: {CURRENCIES}")
 
     # Start signal storage worker thread
     storage_thread = threading.Thread(target=signal_storage_worker, daemon=True)
     storage_thread.start()
     logger.info("Signal storage worker started")
 
-    # Initialize Graph
-    currencies = ["EUR", "USD", "JPY", "GBP", "AUD", "CAD", "CHF"]
-    graph = graph_core.ArbitrageGraph(currencies)
-    logger.info(f"Initialized Graph with {len(currencies)} currencies: {currencies}")
+    # Initialize Graph with expanded currency list
+    graph = graph_core.ArbitrageGraph(CURRENCIES)
+    logger.info(f"Initialized Graph with {len(CURRENCIES)} currencies")
 
     # Kafka Consumer Config
     conf = {
@@ -171,17 +172,19 @@ def main():
                         # Update Quote -> Base (Buy Base)
                         graph.update_rate(quote, base, 1.0 / ask)
                         
-                        # Detect Arbitrage (HOT PATH - must be fast)
-                        cycle = graph.detect_arbitrage()
+                        # Detect Arbitrage with profit calculation (HOT PATH)
+                        result = graph.detect_arbitrage_with_profit()
                         
-                        if cycle:
-                            # NON-BLOCKING: Just queue the signal
+                        if result.cycle:
+                            # NON-BLOCKING: Just queue the signal with profit info
                             try:
                                 signal_queue.put_nowait({
-                                    'cycle': cycle,
+                                    'cycle': result.cycle,
+                                    'profit_pct': result.profit_pct,
+                                    'order': result.order,
                                     'timestamp': time.time_ns()
                                 })
-                                logger.info(f"ARBITRAGE DETECTED: {cycle}")
+                                logger.info(f"ARBITRAGE DETECTED: {result.cycle} | Profit: {result.profit_pct:.4f}% | Order: {result.order}")
                             except queue.Full:
                                 logger.warning("Signal queue full, dropping signal")
                         
@@ -196,6 +199,6 @@ def main():
     finally:
         consumer.close()
 
+
 if __name__ == "__main__":
     main()
-
