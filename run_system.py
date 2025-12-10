@@ -29,7 +29,7 @@ def print_banner():
     banner = """
     |---------------------------------------------------------------|
     |                                                               |
-    |   ⚡ CROSS-BORDER ARBITRAGE DETECTION SYSTEM ⚡                 |
+    |    CROSS-BORDER ARBITRAGE DETECTION SYSTEM                    |
     |                                                               |
     |   C++ Engine | Redpanda Streaming | QuestDB Storage           |
     |                                                               |
