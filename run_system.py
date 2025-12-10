@@ -27,13 +27,13 @@ def colored(text, color):
 
 def print_banner():
     banner = """
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║                                                               ║
-    ║   ⚡ CROSS-BORDER ARBITRAGE DETECTION SYSTEM ⚡               ║
-    ║                                                               ║
-    ║   C++ Engine | Redpanda Streaming | QuestDB Storage           ║
-    ║                                                               ║
-    ╚═══════════════════════════════════════════════════════════════╝
+    |---------------------------------------------------------------|
+    |                                                               |
+    |   ⚡ CROSS-BORDER ARBITRAGE DETECTION SYSTEM ⚡                 |
+    |                                                               |
+    |   C++ Engine | Redpanda Streaming | QuestDB Storage           |
+    |                                                               |
+    |---------------------------------------------------------------|
     """
     print(colored(banner, Colors.CYAN))
 
@@ -48,7 +48,7 @@ class ProcessManager:
         self.running = True
         
     def start_process(self, name, command, cwd, color):
-        """Start a subprocess and stream its output"""
+        #Start a subprocess and stream its output
         print(colored(f"[{timestamp()}] Starting {name}...", color))
         
         try:
@@ -116,7 +116,7 @@ class ProcessManager:
 
 
 def check_docker_services():
-    """Check if Docker services are running"""
+
     try:
         result = subprocess.run(
             ['docker', 'ps', '--format', '{{.Names}}'],
@@ -134,7 +134,6 @@ def check_docker_services():
 
 
 def start_docker_services(project_dir):
-    """Start Docker Compose services"""
     print(colored(f"[{timestamp()}] Starting Docker services...", Colors.BLUE))
     
     try:
@@ -155,7 +154,6 @@ def start_docker_services(project_dir):
 
 
 def rebuild_cpp_extension(engine_dir):
-    """Rebuild the C++ extension"""
     print(colored(f"[{timestamp()}] Rebuilding C++ extension...", Colors.MAGENTA))
     
     try:
