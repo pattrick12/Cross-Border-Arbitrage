@@ -1,10 +1,12 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <queue>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -15,6 +17,11 @@ namespace py = pybind11;
 struct Edge {
   int to;
   double weight;
+  uint64_t timestamp_ms = 0;
+
+  bool is_stale(uint64_t now_ms, uint64_t max_age_ms = 5000) const {
+    return (now_ms - timestamp_ms) > max_age_ms;
+  }
 };
 
 // Result struct for arbitrage detection
@@ -29,11 +36,20 @@ class ArbitrageGraph {
   std::vector<std::vector<Edge>> adj;
   std::unordered_map<std::string, int> currency_to_id;
   std::vector<std::string> id_to_currency;
+  mutable std::shared_mutex graph_mutex;
+  std::vector<std::unordered_map<int, int>> edge_index; // edge_index[u][v] → index in adj[u]
+
+  static uint64_t now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+  }
 
 public:
   ArbitrageGraph(const std::vector<std::string> &currencies) {
     num_currencies = currencies.size();
     adj.resize(num_currencies);
+    edge_index.resize(num_currencies);
     id_to_currency = currencies;
     for (int i = 0; i < num_currencies; ++i) {
       currency_to_id[currencies[i]] = i;
@@ -41,7 +57,7 @@ public:
   }
 
   void update_rate(const std::string &from, const std::string &to,
-                   double rate) {
+                   double rate, double fee_pct = 0.001) {
     if (rate <= 0)
       return;
     if (currency_to_id.find(from) == currency_to_id.end() ||
@@ -50,19 +66,21 @@ public:
 
     int u = currency_to_id[from];
     int v = currency_to_id[to];
-    double weight = -std::log(rate);
+    double effective_rate = rate * (1.0 - fee_pct);
+    double weight = -std::log(effective_rate);
+    uint64_t ts = now_ms();
 
-    // Optimization: Update existing edge instead of pushing new one
-    bool found = false;
-    for (auto &edge : adj[u]) {
-      if (edge.to == v) {
-        edge.weight = weight;
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      adj[u].push_back({v, weight});
+    std::unique_lock lock(graph_mutex);
+
+    auto it = edge_index[u].find(v);
+    if (it != edge_index[u].end()) {
+      // O(1) update existing edge
+      adj[u][it->second].weight = weight;
+      adj[u][it->second].timestamp_ms = ts;
+    } else {
+      // Insert new edge and record its index
+      edge_index[u][v] = static_cast<int>(adj[u].size());
+      adj[u].push_back({v, weight, ts});
     }
   }
 
@@ -75,6 +93,8 @@ public:
     int u = currency_to_id[from];
     int v = currency_to_id[to];
 
+    std::shared_lock lock(graph_mutex);
+
     for (const auto &edge : adj[u]) {
       if (edge.to == v) {
         return std::exp(-edge.weight); // Convert weight back to rate
@@ -85,6 +105,8 @@ public:
 
   // Get all current rates as a list of tuples (from, to, rate)
   std::vector<std::tuple<std::string, std::string, double>> get_all_rates() {
+    std::shared_lock lock(graph_mutex);
+
     std::vector<std::tuple<std::string, std::string, double>> rates;
     for (int u = 0; u < num_currencies; ++u) {
       for (const auto &edge : adj[u]) {
@@ -135,6 +157,8 @@ public:
 
   // New detect_arbitrage that returns cycle with profit
   ArbitrageResult detect_arbitrage_with_profit() {
+    std::shared_lock lock(graph_mutex);
+
     std::vector<double> dist(num_currencies, 0.0);
     std::vector<int> parent(num_currencies, -1);
     std::vector<int> count(num_currencies, 0);
@@ -146,6 +170,8 @@ public:
       q.push(i);
     }
 
+    uint64_t current_time = now_ms();
+
     int cycle_node = -1;
     while (!q.empty()) {
       int u = q.front();
@@ -153,6 +179,10 @@ public:
       in_queue[u] = false;
 
       for (const auto &edge : adj[u]) {
+        // Skip stale edges
+        if (edge.is_stale(current_time))
+          continue;
+
         int v = edge.to;
         double weight = edge.weight;
 
@@ -185,6 +215,12 @@ public:
     }
 
     result.cycle = reconstruct_path(cycle_node, parent);
+
+    // If reconstruct_path failed (disconnected graph / invalid parent chain)
+    if (result.cycle.empty()) {
+      return result;
+    }
+
     result.order = result.cycle.size() - 1; // Exclude repeated currency
     result.profit_pct = calculate_cycle_profit(result.cycle);
 
@@ -193,7 +229,11 @@ public:
 
   std::vector<ArbitrageResult> detect_arbitrage_n(int max_order = 5,
                                                   double min_profit_pct = 0.0) {
+    std::shared_lock lock(graph_mutex);
+
     std::vector<ArbitrageResult> results;
+
+    uint64_t current_time = now_ms();
 
     // DFS from each node to find all cycles
     for (int start = 0; start < num_currencies; ++start) {
@@ -202,7 +242,7 @@ public:
       std::vector<double> weight_sum;
 
       dfs_find_cycles(start, start, path, visited, weight_sum, 0.0, max_order,
-                      min_profit_pct, results);
+                      min_profit_pct, results, current_time);
     }
 
     // Remove duplicate cycles and sort by profit
@@ -240,11 +280,16 @@ private:
                        std::vector<bool> &visited, std::vector<double> &weights,
                        double current_weight, int max_order,
                        double min_profit_pct,
-                       std::vector<ArbitrageResult> &results) {
+                       std::vector<ArbitrageResult> &results,
+                       uint64_t current_time) {
     path.push_back(current);
     visited[current] = true;
 
     for (const auto &edge : adj[current]) {
+      // Skip stale edges
+      if (edge.is_stale(current_time))
+        continue;
+
       int next = edge.to;
       double new_weight = current_weight + edge.weight;
 
@@ -266,7 +311,7 @@ private:
       // Continue exploring if not visited and within order limit
       else if (!visited[next] && static_cast<int>(path.size()) < max_order) {
         dfs_find_cycles(start, next, path, visited, weights, new_weight,
-                        max_order, min_profit_pct, results);
+                        max_order, min_profit_pct, results, current_time);
       }
     }
 
@@ -282,16 +327,27 @@ private:
 
     // Retrace back num_currencies times to ensure we are in the cycle
     for (int i = 0; i < num_currencies; ++i) {
+      if (parent[curr] == -1) {
+        // Graph is disconnected — no valid cycle
+        return {};
+      }
       curr = parent[curr];
     }
 
     int cycle_start = curr;
     cycle_nodes.push_back(curr);
+
+    int steps = 0;
     curr = parent[curr];
 
     while (curr != cycle_start) {
+      if (parent[curr] == -1 || steps > num_currencies + 1) {
+        // Invalid parent chain — bail out
+        return {};
+      }
       cycle_nodes.push_back(curr);
       curr = parent[curr];
+      steps++;
     }
     cycle_nodes.push_back(cycle_start);
 
@@ -326,7 +382,9 @@ PYBIND11_MODULE(graph_core, m) {
 
   py::class_<ArbitrageGraph>(m, "ArbitrageGraph")
       .def(py::init<const std::vector<std::string> &>())
-      .def("update_rate", &ArbitrageGraph::update_rate)
+      .def("update_rate", &ArbitrageGraph::update_rate,
+           py::arg("from_currency"), py::arg("to_currency"), py::arg("rate"),
+           py::arg("fee_pct") = 0.001)
       .def("get_rate", &ArbitrageGraph::get_rate)
       .def("get_all_rates", &ArbitrageGraph::get_all_rates)
       .def("calculate_cycle_profit", &ArbitrageGraph::calculate_cycle_profit)

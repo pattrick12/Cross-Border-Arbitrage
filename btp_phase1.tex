@@ -1,0 +1,736 @@
+\documentclass[letterpaper,11pt]{report}
+
+\usepackage{fullpage}
+\usepackage{verbatim}
+\usepackage{cite}
+\usepackage{setspace}
+\usepackage{fancyhdr}
+
+%\usepackage{noReferences}
+\usepackage[small]{caption}
+\usepackage{graphics}
+\usepackage{color}
+
+\usepackage{hyperref}
+
+%\usepackage{natbib}
+
+\usepackage[dvips]{graphicx}
+ % define the title
+
+
+% Paper conservation layout. Long live the trees!!
+\setlength{\oddsidemargin}{-0.4mm} % 25 mm left margin
+\setlength{\evensidemargin}{\oddsidemargin}
+\setlength{\textwidth}{160mm}      % 25 mm right margin
+\setlength{\topmargin}{-5.4mm}     % 20 mm top margin
+\setlength{\headheight}{5mm}
+\setlength{\headsep}{5mm}
+\setlength{\footskip}{10mm}
+\setlength{\textheight}{237mm}     % 20 mm bottom margin
+
+
+\setlength{\parskip}{1ex}
+\parindent 0in
+\def\SAONE{Specific Aim 1}
+\def\SATWO{Specific Aim 2}
+\def\SATHREE{Specific Aim 3}
+\def\SAFOUR{Specific Aim 4}
+
+\def\title{High Frequency Signal Generation Engine for Cross-Border Arbitrage}
+%\def\titletwo{Thesis Proposal Title Line 2}
+
+\begin{document}
+
+\include{btech_thesis_cover}
+
+%\newpage
+%
+%\pagestyle{empty}
+%\vspace*{7.1in} 
+
+\newpage
+
+\begin{center}
+\textbf{\Large Student's Declaration}\label{section:declaration}
+\end{center}
+%\vspace{3in}
+I hereby declare that the work presented in the report entitled \textbf{``High Frequency Signal Generation Engine for Cross Border Arbitrage"} submitted by me for the partial fulfillment of the requirements for the degree of \emph{Bachelor of Technology} at
+ Indraprastha Institute of Information Technology, Delhi, is an authentic record of my work carried out under guidance of \textbf{Prof. Pankaj Vajpayee}. Due acknowledgements have  been given in the report to all material used. This work has not been submitted anywhere else for the reward of any other degree.
+ \\ \vspace{0.5in}
+
+\textbf{..............................}\hfill
+\textbf{ Place \& Date: Delhi, 28/11/2025} \\
+\textbf{Prakhar}\\
+\textbf{Pooja Nardeo Singh}\\
+\textbf{Rishit Gupta}
+
+%\doublespacing
+
+
+
+\vspace{3in}
+%\iffalse
+\begin{center}
+\textbf{\Large Certificate} \label{section:certificate}
+\end{center}
+%\vspace{3in}
+This is to certify that the above statement made by the candidate is correct to the best of my knowledge.
+ \\ \vspace{0.4in}
+
+\textbf{..............................}\hfill
+\textbf{ Place \& Date: Delhi, 28/11/2025} \\
+\textbf{Prof. Pankaj Vajpayee}\\
+
+
+
+\pagebreak
+
+\begin{abstract}
+
+In the fragmented landscape of global foreign exchange (FX) and cryptocurrency markets, price discrepancies often arise due to liquidity fragmentation and latency. Exploiting these inefficiencies requires a system capable of processing high-frequency tick data to detect arbitrage cycles in near real-time. This project presents the design and implementation of a low-latency Cross-Border Arbitrage Platform.\\
+\vspace{1em}
+
+The system leverages a Graph Streaming architecture where currencies represent nodes and exchange rates represent weighted edges. By transforming the arbitrage problem into a negative cycle detection problem within a directed graph, we utilize an optimized Shortest Path Faster Algorithm (SPFA) implemented in C++ to identify profit opportunities. The infrastructure is built on Redpanda for high-throughput event streaming and QuestDB for high-performance time-series storage.\\
+
+\vspace{1em}
+
+This report details the intuition behind higher-order arbitrage, the mathematical foundations of graph-based detection, the evolution of our technology stack (addressing challenges with Python latency and JVM-based brokers), and the roadmap for integrating Statistical and Machine Learning models in the subsequent phase. \\
+
+\vspace{2in}
+Keywords: ..(Arbitrage, Graph Algorithms, Streaming Graphs, Redpanda, SPFA, Data Pipelines, QuestDB, Event Driven Systems)...
+\end{abstract}
+
+\newpage
+
+
+
+\section*{Acknowledgments}\label{section:acknowledgments}
+\pagestyle{plain}
+\pagenumbering{roman}
+
+We would like to express my heartfelt gratitude to Professor Pankaj Vajpayee for his invaluable guidance, encouragement, and support throughout this project. His expertise and insights have been instrumental in shaping the direction of my work and overcoming the challenges faced during its execution.
+
+We are also thankful to the open-source communities of Redpanda and QuestDB for providing the robust tools that form the backbone of this system. Their documentation and active forums were instrumental in overcoming specific configuration hurdles faced during the development phase.
+
+\vspace{2in}
+% \section*{Work Distribution}
+% % explain chapterwise when  the reported work has been done.
+
+\newpage
+
+\tableofcontents
+\newpage
+
+% Remove the manual \section entries — they duplicate the TOC
+
+% Use chapters instead so numbering stays consistent
+\chapter{Introduction}
+
+\section{Motivation}
+
+Modern financial markets approach informational efficiency yet operate across fragmented trading venues, regulatory regimes, and liquidity pools. 
+Under classical asset pricing theory, efficient markets enforce the \textbf{Law of One Price (LOOP)}, which asserts that economically identical assets should trade at the same price when expressed in a common numeraire.  
+Formally:
+
+\begin{quote}
+    \textbf{Law of One Price:}  
+    If two assets generate identical cash flows under all future states of the world, their prices must be equal in equilibrium, 
+    else arbitrageurs can construct a zero-net-investment strategy yielding risk-free profit.
+\end{quote}
+
+Despite this theoretical guarantee, empirical observations consistently report \textbf{short-lived pricing dislocations} induced by communication delays, disparate market microstructures, and exchange-specific fees. 
+As trading has become increasingly algorithmic, the temporal tolerance for exploiting such inefficiencies has compressed from seconds (early electronic trading) to \textbf{sub-millisecond scales}.  
+This shift has challenged traditional architectures that depend on database polling or sequential REST processing, both of which incur non-deterministic latency, rendering them unsuitable for high-frequency arbitrage engines.
+
+
+
+\section{Problem Statement}
+
+To design and implement a hybrid high-frequency system that can:
+
+\begin{itemize}
+    \item Ingest real-time tick-level foreign exchange (FX) quotes at microsecond resolution.
+    \item Maintain a continuously updated directed \textbf{currency exchange graph}, where nodes denote currencies and edges encode exchange rates.
+    \item Detect profitable arbitrage loops \emph{dynamically} without assuming a fixed cycle depth.
+    \item Ensure minimal and deterministic end-to-end latency using a fully event-driven design.
+\end{itemize}
+
+
+
+\section{Fundamentals of Arbitrage}
+
+
+ 
+\textbf{Arbitrage} is a trading strategy that requires \textbf{no initial net capital investment}, entails \textbf{no exposure to market risk}, 
+and yields \textbf{non-negative profit with strictly positive probability}, 
+assuming friction-adjusted price differences persist long enough for execution.
+\vspace{1em}
+
+Arbitrage opportunities disappear rapidly due to competitive order placement and liquidity matching. 
+In FX markets, trades occur over pairs $(A/B)$, representing the price of one unit of currency $A$ expressed in currency $B$.
+
+\vspace{1em}
+
+\textbf{1.3.1 Triangular Arbitrage (3-Hop):} \\ 
+A canonical arbitrage path involving three distinct currencies $(c_1, c_2, c_3)$ forming a cycle. This is the most common form, If the product of the cross-rates minus fees is 1, then profit is realized.\\
+Let the quoted exchange rates be:
+
+
+\[
+R_{12} = \text{Rate~of~} c_1 \to c_2, \quad
+R_{23} = \text{Rate~of~} c_2 \to c_3, \quad
+R_{31} = \text{Rate~of~} c_3 \to c_1
+\]
+
+Simply, A triangular arbitrage is profitable if:
+\[
+R_{12} \cdot R_{23} \cdot R_{31} > 1
+\]
+
+For example, USD $\to$  EUR $\to$ GBP $\to$ USD,  If the product of the cross-rates minus fees is greater than 1, profit is realized, and we reach our base currency with zero or minimal risk.
+
+However, trading currencies incurs cost such as infrastructure, trading and exchange fees etc. Let $f_{ij}$ be the fees/cost that is incurred while trading between currencies $c_i$ and $c_j$. A triangular arbitrage is profitable if:
+
+\[
+(1 - f_{12}) R_{12} \cdot (1 - f_{23}) R_{23} \cdot (1 - f_{31}) R_{31} > 1
+\]
+
+If this condition holds, the cycle compounds into a risk-free return exceeding the initial capital when converted back into the originating currency. 
+
+\vspace{1em}
+
+\textbf{1.3.2 Higher-Order Arbitrage ($n$-Hop Cycles):}  \\
+Arbitrage loops may span more than three currencies. Unlike triangular checks which assume depth-3, 
+general arbitrage detection requires identifying cycles $c_1 \to c_2 \to \dots \to c_1$ for any $n \geq 3$. 
+
+Example: USD $\to$ JPY $\to$ AUD $\to$ CAD $\to$ EUR $\to$ USD.
+
+Intuition: A slight mispricing in the Australian Dollar (AUD) relative to the Canadian Dollar (CAD) might not trigger a triangular alert with USD, but when chained through the Euro zone, the discrepancy compounds into a profitable loop.
+
+% \vspace{0.8em}
+
+\begin{quote}
+    \textbf{Fee-Adjusted Exchange Graph:}  
+    A directed weighted graph $G = (V, E, w)$ where:
+    \begin{itemize}
+        \item $V$ is the set of traded currencies.
+        \item $E$ is the set of ordered currency pairs with a direct market quote.
+        \item $w(u,v) = -\log((1 - f_{uv}) R_{uv})$ represents the friction-adjusted edge weight.
+    \end{itemize}
+\end{quote}
+
+By moving into log-space using $-\log$, arbitrage cycle detection becomes equivalent to finding a \textbf{negative cycle}:
+
+\begin{quote}
+    \textbf{(Negative Cycle in FX Graph):}  
+    A cycle $\gamma = (u_1, u_2, \dots, u_k, u_1)$ is an arbitrage opportunity if:  
+    \[
+    \sum_{i=1}^{k} w(u_i, u_{i+1}) < 0
+    \]  
+    This implies the product of fee-adjusted exchange rates along the cycle exceeds 1.
+\end{quote}
+ Detecting these requires a graph traversal algorithm capable of flexible depth, rather than hard-coded triangle checks.
+
+
+\section{Low-Latency Event-Driven Computation}
+
+\begin{quote}
+    \textbf{Latency in Market Microstructure):}  
+     Latency is the elapsed time across data generation, decision, order transmission, exchange execution, or acknowledgment, measured end-to-end or per system segment. 
+    In high-frequency arbitrage, both the \textbf{mean} and \textbf{variance} of latency must be minimized to maintain competitiveness.
+\end{quote}
+
+\begin{quote}
+    \textbf{Event-Driven System:}  
+    A system architecture where market updates generate asynchronous events that \textbf{trigger computation immediately}, 
+    eliminating polling delays and enabling deterministic real-time reactions.
+\end{quote}
+
+Tick updates continuously redefine edge weights, transforming $G$ into a \textbf{streaming graph}. 
+Upon each update, instant re-evaluation of arbitrage feasibility is required, motivating the use of incremental shortest-path relaxations such as SPFA to support rapid negative cycle discovery.
+
+
+\section{Statistical \& Predictive Arbitrage (Future Scope)}
+
+Beyond deterministic cycle violations, \textbf{statistical arbitrage} exploits mean reversion or probabilistic mispricing rather than guaranteed LOOP breaches.
+
+\begin{itemize}
+    \item \textbf{Statistical Arbitrage):}  
+    Statistical arbitrage (StatArb) is a quantitative, data-based trading strategy that seeks to profit from \emph{expected} price or spread convergence, guided by statistical relationships such as mean reversion or cointegration, rather than deterministic price inequalities. 
+
+    \item \textbf{Pairs Trading):}  
+    Pairs trading is a market-neutral strategy that involves taking long and short positions in two historically related assets when their price spread deviates from its typical mean, assuming the spread will revert. 
+
+    \item \textbf{Cointegration):}  
+    Cointegration describes a statistical condition where two non-stationary time-series share a long-run equilibrium such that a linear combination of them forms a stationary (mean-reverting) process, enabling spread-based arbitrage signals. 
+
+    \item \textbf{Predictive Modeling (Future Scope):}  
+    Predictive arbitrage uses machine learning models to forecast short-horizon price or spread movements to improve signal lead-time before convergence completes. 
+\end{itemize}
+
+
+\chapter{Methodology \& Mathematical Modeling}
+
+\section{Graph Representation}
+
+For detecting arbitrage, we can model our foreign exchange (FX) market as a \textbf{directed weighted graph}:
+
+\begin{equation}
+G = (V, E)
+\end{equation}
+
+where vertices represent currencies and edges represent available exchange pairings.
+
+\begin{itemize}
+    \item \textbf{Vertex Set $V$:}  
+    The set of nodes $V$ consists of distinct traded currencies in the market, such as USD, EUR, and JPY.
+
+    \item \textbf{Edge Set $E$:}  
+    A directed edge $(u, v) \in E$ exists if a liquid, executable market quote for the pair $u/v$ is available at time $t$.
+\end{itemize}
+
+A friction-free arbitrage cycle $\gamma = (c_1, c_2, \dots, c_n, c_1)$ is profitable if the compounded exchange rate exceeds unity:
+
+\begin{equation}
+\prod_{i=1}^{n} R_{c_i,c_{i+1}} > 1
+\end{equation}
+
+This can be written more explicitly as:
+
+\begin{equation}
+R_{1} \times R_{2} \times \dots \times R_{n} > 1
+\end{equation}
+
+\vspace{1em}
+
+Classical shortest-path algorithms operate on \emph{additive} weights, while arbitrage is inherently \emph{multiplicative}.  
+To align with the standard graph formulation, we apply the logarithmic transformation:
+
+\begin{quote}
+\textbf{Log-Transformed Edge Weight:}  
+For a direct exchange rate quote $\text{Rate}_{u,v}$, the edge weight is defined as:
+\end{quote}
+
+\begin{equation}
+w(u, v) = - \log(\text{Rate}_{u,v})
+\end{equation}
+
+\vspace{1em}
+
+\begin{quote}
+\textbf{Negative Cycle:}  
+A cycle $\gamma$ in $G$ is a \emph{negative cycle} if:
+\[
+\sum_{(u,v)\in \gamma} w(u,v) < 0
+\]
+\end{quote}
+
+With this transformation, negative cycle detection becomes equivalent to arbitrage identification because:
+
+\[
+\sum w(u,v) < 0 \iff -\log\left(\prod R_{u,v}\right) < 0 \iff \prod R_{u,v} > 1
+\]
+
+Thus, \textbf{arbitrage cycle detection reduces to negative cycle detection in log-price space}.
+
+
+
+\section{Algorithm Selection}
+
+Because tick updates must re-evaluate only parts of the graph that actually change, algorithmic efficiency is critical.
+
+\begin{itemize}
+    \item \textbf{Floyd–Warshall:}  
+    A dynamic programming algorithm that computes all-pairs shortest paths in $O(V^3)$ time. Its cubic complexity makes it impractical for real-time streaming graphs.
+
+    \item \textbf{Bellman–Ford:}  
+    A single-source shortest path relaxation method with worst-case time complexity $O(V \cdot E)$, capable of detecting negative cycles but requiring full-edge scans per iteration.
+
+    \item \textbf{SPFA (Shortest Path Faster Algorithm):}  
+    A queue-based improvement over Bellman–Ford that performs edge relaxations \emph{only for nodes whose distances were updated in the previous step}.  
+    For sparse graphs, SPFA empirically approaches $O(kE)$ on average, where $k$ is a small constant, making it well-aligned with currency graphs where $|E| \ll |V|^2$.
+\end{itemize}
+
+SPFA is chosen for this research prototype due to its event-reactive relaxation behavior, low practical depth constant, and suitability for streaming sparse graphs, which dominate in cross-currency FX markets.
+
+
+\section{Methodological Summary}
+
+The methodology consists of:
+
+\begin{itemize}
+    \item Modeling FX quotes as a sparse directed graph.
+    \item Transforming multiplicative arbitrage conditions into additive log-weights.
+    \item Using negative cycle detection as the formal arbitrage decision criterion.
+    \item Selecting SPFA for latency-aware graph relaxation in high-frequency settings.
+\end{itemize}
+
+
+
+\chapter{System Architecture}
+
+The system adopts a \textbf{microservices-oriented architecture}, implemented using Docker for containerization and inter-service isolation.
+
+
+\section{Data Ingestion Layer}
+
+\begin{itemize}
+    \item \textbf{Data Source: OANDA v20 API):}  
+    OANDA is a retail FX broker providing \emph{tradeable, executable} bid/ask quotes directly from its liquidity engine, functioning primarily as a market maker rather than an indicative data aggregator.
+
+    \item \textbf{Tick Data Format:}  
+    Each FX update (market tick) is represented internally using a standardized JSON structure:
+    \begin{equation}
+        \{\texttt{instrument}, \texttt{time}, \texttt{bid}, \texttt{ask}\}
+    \end{equation}
+
+    \item \textbf{Technology Choice:} Python-based asynchronous tick producers implemented using \texttt{asyncio} and \texttt{asyncio.Queue}, orchestrated through \texttt{asyncio}-driven event loops or \texttt{asyncio}-compatible concurrency runtimes.
+\end{itemize}
+
+This layer continuously normalizes external streaming payloads into the internal schema and emits events to the message bus without waiting for downstream services to acknowledge persistence.
+
+
+\section{Streaming Backbone (Message Broker)}
+
+\begin{itemize}
+    \item \textbf{(Message Broker: Redpanda):}  
+    Redpanda is a distributed log-based streaming system implemented in \textbf{C++}, using a \emph{thread-per-core execution model} and direct disk I/O.It is an alternative of Apache Kafka (which is widely used data streaming service). Kafla utilises JVM which adds to latency. However Redpanda bypasses JVM garbage collection pauses by eliminating the Java runtime altogether, offering lower and more predictable tail latency than traditional Java-based brokers.
+    \newpage
+
+    \item \textbf{Streaming Topics Utilized:}
+    \begin{itemize}
+        \item \texttt{market\_data} — raw real-time FX ticks
+        \item \texttt{graph\_updates} — in-memory graph state changes
+        \item \texttt{signals} — detected arbitrage cycle alerts
+    \end{itemize}
+
+    \item \textbf{Design Rationale:} This design serves as the decoupled communication bus and ensures that high-throughput data streams and arbitrage signals propagate independently of storage sinks (QuestDB for historical Database), preventing slow disk writes from blocking real-time decision paths.
+\end{itemize}
+
+
+
+\section{Core Compute Engine (Graph Processor)}
+
+\begin{itemize}
+    \item \textbf{Core Engine:}  
+    The compute engine is a hybrid service where latency-sensitive trading logic is executed natively in C++, exposed to Python through binding layers while avoiding interpreter overhead in the critical path.
+
+    \item \textbf{Technology Choices:}
+    \begin{itemize}
+        \item C++ compute core
+        \item PyBind11 interface bindings
+        \item In-memory graph state storage
+    \end{itemize}
+
+    \item \textbf{Responsibilities:}
+    \begin{itemize}
+        \item Consumes tick events from Redpanda topics
+        \item Maintains a live directed currency graph $G_t = (V, E, w_t)$ in memory
+        \item Applies \textbf{incremental SPFA relaxations} to update node distances:
+        \begin{equation}
+            d_v(t) = \min(d_v(t), d_u(t) + w_t(u,v))
+        \end{equation}
+
+        \item Detects arbitrage feasibility by identifying negative cycles:
+        \begin{equation}
+            \sum_{(u,v)\in \gamma} -\log(\text{Rate}_{u,v}) < 0 \iff \prod_{\gamma} \text{Rate}_{u,v} > 1
+        \end{equation}
+
+        \item Publishes detected cycle signals back to Redpanda
+    \end{itemize}
+
+    \item \textbf{Streaming Graph:}  
+    The FX graph is classified as a \emph{streaming graph} because edge weights $w_t(u,v)$ are redefined asynchronously upon each market tick. This continuously evolving topology requires algorithms that avoid full recomputation on each update.
+\end{itemize}
+
+Given the sparsity of the currency connectivity ($|E| \ll |V|^2$), SPFA provides strong practical efficiency, queueing only recently relaxed nodes for further edge relaxation.
+
+
+\section{Persistence Sink (QuestDB)/ Historical Database}
+
+\begin{itemize}
+    \item \textbf{QuestDB:}  
+    QuestDB is a column-oriented time-series database supporting SQL queries and ultra-high ingestion speeds, optimized using \textbf{SYMBOL} types (interned strings) for rapid indexed filtering.
+
+    \item \textbf{Data Storage Protocol:}  
+    Incoming market ticks are written using \emph{Influx Line Protocol (ILP)} over TCP for low-overhead, continuous ingestion.
+
+    \item \textbf{Stored Entities:}
+    \begin{itemize}
+        \item All \texttt{market\_data} ticks
+        \item All arbitrage signals emitted from the core engine
+    \end{itemize}
+
+    \item \textbf{Schema Design Intuition:}  
+    Uses SYMBOL fields for currency pairs:
+    \begin{equation}
+        \texttt{WHERE symbol = `EUR/USD`}
+    \end{equation}  
+    enabling microsecond query filters for backtesting and time-bucket aggregations in analytics dashboards.
+\end{itemize}
+
+Historical storage is strictly non-blocking, ensuring persistence failures or delays cannot stall signal generation. We will use this data for employing statistical arbitrage and other ML techniques, as mentioned in future scope.
+
+
+\section{Architectural Properties}
+
+\begin{itemize}
+    \item \textbf{Event-Driven System:}  
+    A system that reacts to \emph{market events} instead of synchronous clock polling, triggering compute immediately when new data arrives.
+
+    \item \textbf{Containerized Deployment:}  
+    Reproducible Docker containers (orchestration optionally using Docker Compose) isolate producer, compute, and storage pipelines.
+
+    \item \textbf{Zero-Copy I/O using Redpanda:}  
+    A design where disk and network operations avoid intermediate memory copying, enabling superior throughput and reduced tail latency in streaming workloads.
+
+    \item \textbf{Modularity Guarantee:}  
+    Decoupled services ensure:  
+    \emph{High-speed compute is isolated from slow persistence} — a critical requirement for triangular or n-dimensional arbitrage feasibility detection.
+\end{itemize}
+
+
+\section{Methodological Architecture Summary}
+
+The architecture consists of three main services communicating asynchronously through a high-performance bus:
+
+\begin{equation}
+\text{Tick~Source (Python)} \rightarrow \text{Redpanda} \rightarrow \text{Compute~Core~(C++)} \rightarrow \text{Redpanda} \rightarrow \text{QuestDB~Sink}
+\end{equation}
+
+This separation enforces that ingestion and negative cycle detection remain non-blocking while QuestDB writes process asynchronously in parallel.
+
+\chapter{Challenges faced in Research and development}
+
+A key objective of the research phase was identifying technologies that reduce \textbf{latency} while supporting high-throughput, real-time computation. 
+Given the streaming nature of arbitrage engine, the system design evolved iteratively as architectural bottlenecks were observed and resolved.
+
+\section{Streaming Graph Requirements and Broker Evolution}
+
+To detect arbitrage loops, the engine must operate on a \textbf{continuously evolving currency graph}, where edge weights update asynchronously at tick arrival time.
+
+
+The initial system design incorporated \textbf{Apache Kafka} as the message broker, under the assumption that its wide adoption ensured stability for real-time market data streams:
+
+\begin{equation}
+\text{Market ~Ticks} \rightarrow \texttt{Kafka ~Topic} \rightarrow \text{Graph ~Updates}
+\end{equation}
+
+However, Kafka’s dependency on the Java runtime environment introduces \emph{non-deterministic performance artifacts}, most notably garbage-collection-induced latency spikes.
+
+This led to a system-level pivot:
+
+\begin{itemize}
+    \item \textbf{Original choice:} Apache Kafka, motivated by maturity and ecosystem support.
+    \item \textbf{Observed challenge:} JVM runtime overhead and operational dependency on Zookeeper/KRaft, coupled with GC pauses that affect tail latency.
+    \item \textbf{Pivot decision:} Migration to \textbf{Redpanda}, a \textbf{C++-native} distributed streaming broker compatible with Kafka APIs and free from Zookeeper reliance, offering consistently lower tail latency in sparse streaming graphs. Redpanda was designed to be a drop-in replacement for Apache Kafka. It speaks the exact same "language", so implementing it was easy.
+\end{itemize}
+
+Thus, the backbone shifted from Kafka to Redpanda:
+
+
+This ensured graph updates are triggered on \textbf{market events} instead of being impacted by runtime pauses.
+
+
+
+\section{Language Selection and the Hybrid Compute Model}
+
+The compute strategy initially began with \textbf{pure Python}, primarily due to rapid prototyping capability.
+
+
+Real-time arbitrage detection involves frequent relaxations over adjacency matrices approaching \(V^2\) connectivity. This transforms the problem into a \textbf{latency-sensitive graph traversal task} operating at high update frequency \((>10^4\) events/sec\().\)
+
+The bottlenecks observed:
+
+\begin{itemize}
+
+    \item Restricted parallelism for CPU-bound components due to the GIL.
+    \item High compute latency $(>100) ms$ when operating on large adjacency matrices.
+\end{itemize}
+
+This motivated a \textbf{hybrid compute pivot}:
+
+\begin{itemize}
+    \item \textbf{C++ Compute Core:} Implemented for the graph data structure and SPFA relaxations, compiled into a shared library for native execution.
+    \item \textbf{Python Integration:} The C++ core is exposed to Python using \textbf{PyBind11}, enabling orchestration, analytics, and strategy logic to leverage Python’s mature data-science ecosystem \emph{without carrying critical path compute}.
+\end{itemize}
+
+Julia was also evaluated conceptually due to its numerical capabilities and lack of traditional runtime locks. However, the final decision prioritized a \textbf{C++ compute core} with Python wrapping for ecosystem compatibility and minimal latency.
+
+
+\section{Persistence Sink}
+
+\textbf{Initial choice:} kdb+,it is a high-performance time-series database built around an in-memory columnar model, designed for fast analytics and low-latency access, powered by the q language. It is widely used within high-frequency and quantitative finance infrastructure due to its \emph{in-memory columnar processing}.
+
+Despite its architectural strengths, including in-memory inserts, zero-copy scans, and fast aggregations, practical limitations were encountered:
+
+\begin{itemize}
+    \item Proprietary licensing costs, making it unsuitable for budget-constrained research prototyping.
+    \item A steeper learning curve associated with its primary query language (\texttt{q}), which extended development ramp-up time.
+\end{itemize}
+
+\textbf{Pivot decision:} Migration to \textbf{QuestDB}, a fully open-source alternative that retains time-series strengths under SQL semantics. \textbf{QuestDB} supports C++ native execution, column-oriented storage, SIMD-based query acceleration, and high-throughput ingestion via \emph{Influx Line Protocol (ILP)}.
+
+We designed persistence system as a parallel sink so database throughput limits \emph{do not block signal generation}. This sink will allow us to store and work on historical time-series data, while also supporting compliance and regulatory reporting.
+
+While the system now uses QuestDB, the architecture retains flexibility to incorporate kdb-like \textbf{in-memory analytics concepts} in future extensions if needed, including advanced HFT workloads where historical data resides in memory for ultra-fast materialized time-bucket scans.
+
+
+Also, a trading system must support extremely high quote arrival frequencies. For a graph engine processing 10k+ tick events per second:
+
+\begin{itemize}
+    \item \textbf{Traditional SQL DB Limitation:} OLTP databases struggle with sustained insert throughput for pure append-only tick workloads.
+    \item \textbf{Selected capability:} QuestDB supports continuous \textbf{append-only streaming ingestion} orders of magnitude faster than row-based storage models.
+\end{itemize}
+
+This enables time-series aggregations immediately after ingestion, forming the basis for future analytics such as VWAP or rolling mid-price spreads.
+
+\chapter{Implementation Status \& Results}
+
+\section{Infrastructure Setup}
+
+The system stack is fully containerized using \texttt{docker-compose}, ensuring environment reproducibility and process isolation across services.  
+
+In this setup, the QuestDB instance, the Redpanda broker, Redpanda Console, and the asynchronous Python producers and consumers operate independently — guaranteeing that ingestion services do not stall due to persistence-layer load.
+
+\section{Schema Design}
+
+Tick data is stored using an optimized, append-only time-series schema implemented in QuestDB. The \texttt{SYMBOL} type is used for currency pair identifiers to optimize storage efficiency via string interning.
+
+\begin{quote}
+\textbf{String Interning in Columnar Storage:}  
+A memory and space optimization technique where repeated string values are stored once and replaced by integer references, enabling faster comparisons, reduced storage overhead, and improved query performance.
+\end{quote}
+
+By mapping currency symbols to low-overhead internal representations, filtering operations such as:
+
+\[
+\texttt{WHERE symbol = `EUR/USD`}
+\]
+
+become integer-level comparisons rather than costly string scans — improving both ingestion and analytical query speed.
+
+
+\section{Simulation Results (Phase 1)}
+
+In Phase 1, the system was evaluated under synthetic stress scenarios generated via the mock data pipeline. A notable test case simulated a sharp price drop in USD/JPY while EUR/USD remained stable, approximating a \textbf{flash dislocation} event.
+
+\begin{quote}
+\textbf{Synthetic Flash Dislocation Test:}  
+A simulated market stress scenario where selected currency pairs experience abrupt quote shifts to evaluate real-time responsiveness, algorithmic correctness, and latency behavior under non-equilibrium pricing conditions.
+\end{quote}
+
+Observation and findings:
+
+\begin{itemize}
+    \item The engine successfully identified the cycle:
+    \[
+        \text{USD} \rightarrow \text{EUR} \rightarrow \text{JPY} \rightarrow \text{USD}
+    \]
+    \item The detection event was emitted within $12 ms$ after tick arrival.
+    \item \textbf{Interpretation:} The result confirms algorithmic correctness of cycle feasibility detection under log-weight relaxations, and validates that the prototype compute path operates within low-double-digit millisecond runtime on sparse adjacency updates. Tail latency bounds will require further study under live feeds.
+\end{itemize}
+
+\chapter{Conclusion \& Future Work}
+
+\section{Conclusion}
+
+This work establishes a research prototype for a real-time arbitrage detection engine built on streaming market events and graph relaxations. 
+The architectural migration toward a \textbf{C++-native compute core} and \textbf{Redpanda-based streaming backbone} significantly improved runtime predictability compared to interpreter-bound or JVM-paused designs.
+
+Key validated contributions at this stage include:
+
+\begin{itemize}
+    \item Transformation of multiplicative arbitrage feasibility into additive graph relaxations via log-space modeling.
+    \item Implementation of SPFA relaxations for sparse streaming currency graphs without assuming fixed cycle depth.
+    \item Isolation of tick ingestion from persistence sinks to ensure non-blocking signal propagation.
+    \item Successful empirical validation of cycle detection feasibility within measured millisecond-scale reaction time in synthetic mock testing.
+\end{itemize}
+
+The prototype demonstrates \textbf{correct detection behavior}, while live execution latency, slippage resilience, and queue behavior remain open areas for further evaluation and benchmarking.
+
+
+\section{Future Work (Semester 2)}
+
+Planned extensions are framed as system evolution, not yet-implemented features. These include:
+
+\begin{itemize}
+
+    \item \textbf{Statistical Arbitrage Module:}  
+    A planned data-driven system component that will generate spread-based trading signals from statistically validated mean-reverting processes, trained using the stored tick stream.
+
+    \item \textbf{Machine Learning Integration:}  
+    Utilize historical quote data stored within QuestDB to train mean-reversion models, such as the \emph{Ornstein–Uhlenbeck (OU) process}.
+
+    \begin{quote}
+        \textbf{ Ornstein–Uhlenbeck Process:}  
+        A continuous-time stochastic process defined by the SDE:
+        \[
+            dZ_t = \theta(\mu - Z_t) dt + \sigma dW_t
+        \]
+        where $\mu$ is the long-run mean, $\theta$ is the speed of reversion, $\sigma$ controls diffusion volatility, and $W_t$ is a Wiener process. It is widely used to model mean-reverting spreads in quantitative trading.
+    \end{quote}
+
+    \item \textbf{Risk-Aware Trade Sizing:}  
+    Introduce volatility-sensitive risk controls using \emph{Value at Risk (VaR)} estimates.
+
+    \item \textbf{Transition to Live Feeds:}  
+    Replace the mock tick generator with the authentic OANDA v20 streaming API to evaluate real-world latency variance and execution feasibility.
+
+\end{itemize}
+
+
+\begin{thebibliography}{9}
+
+
+\bibitem{mlArb}
+M. Dixon et al., *High-Frequency Tick Forecasting Using Deep Learning*, arXiv.
+
+\bibitem{loop}
+F. Isard, ``The Law of One Price,'' \emph{International Encyclopedia of the Social Sciences}, 2nd ed.
+
+\bibitem{arbitrage}
+S. Ross, ``Arbitrage Theory,'' \emph{The Journal of Finance}, vol. 31.
+
+\bibitem{bellmanford}
+R. Bellman, ``On a Routing Problem,'' \emph{Quarterly of Applied Mathematics}.
+
+
+\bibitem{sparse}
+D. Cormen et al., \emph{Introduction to Algorithms}, 4th ed., MIT Press.
+
+\bibitem{hft}
+J. Aldridge, ``High-Frequency Trading Systems: Architecture and Latency Guarantees,'' \emph{Springer Finance Series}.
+
+\bibitem{redpanda}
+Redpanda Data Inc., ``Redpanda Architecture and Zero-Copy Streaming,'' Technical Whitepaper.
+
+\bibitem{questdb}
+QuestDB Open Source Community, ``High-Throughput Time-Series Analytics with QuestDB,'' Project Documentation.
+
+\bibitem{ou}
+G. Uhlenbeck and L. Ornstein, ``On the Theory of Brownian Motion.
+
+\end{thebibliography}
+%\newpage
+
+%\newpage
+
+\newpage
+\mbox{}
+
+
+%\doublespacing
+
+% \chapter{Introduction}\label{chapter:introduction}
+% %\pagestyle{fancy}
+% \pagenumbering{arabic}
+% \setcounter{page}{1}
+% \onehalfspacing
+% \cite{Perugini:2007:SOI:1240624.1240770}
+
+
+
+
+\end{document}

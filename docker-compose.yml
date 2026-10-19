@@ -1,5 +1,4 @@
 
-
 services:
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:latest
@@ -26,8 +25,9 @@ services:
     image: questdb/questdb:latest
     container_name: arb-questdb
     ports:
-      - "9000:9000"
-      - "9009:9009"
+      - "9000:9000"   # REST API / Web Console
+      - "9009:9009"   # InfluxDB Line Protocol (ILP)
+      - "8812:8812"   # PostgreSQL wire protocol
     volumes:
       - ./data/questdb:/var/lib/questdb
     networks:
@@ -42,6 +42,39 @@ services:
       KAFKA_BROKERS: arb-redpanda:9092
     depends_on:
       - redpanda
+    networks:
+      - arb-net
+
+  # --- Flink Cluster (PyFlink target) ---
+  flink-jobmanager:
+    image: flink:1.18-scala_2.12-java11
+    container_name: arb-flink-jobmanager
+    ports:
+      - "8081:8081"   # Flink Web UI
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        parallelism.default: 2
+    volumes:
+      - ./data/flink/checkpoints:/opt/flink/checkpoints
+    networks:
+      - arb-net
+
+  flink-taskmanager:
+    image: flink:1.18-scala_2.12-java11
+    container_name: arb-flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        parallelism.default: 2
+    volumes:
+      - ./data/flink/checkpoints:/opt/flink/checkpoints
     networks:
       - arb-net
 
